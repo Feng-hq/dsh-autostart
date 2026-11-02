@@ -7,6 +7,15 @@
   "main": "./index.js",
   "icon": "./icon.svg",
   "license": "MIT",
+  "author": "Feng-hq",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Feng-hq/dsh-autostart.git"
+  },
+  "homepage": "https://github.com/Feng-hq/dsh-autostart#readme",
+  "bugs": {
+    "url": "https://github.com/Feng-hq/dsh-autostart/issues"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
