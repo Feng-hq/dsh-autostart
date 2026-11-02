@@ -3,5 +3,5 @@ name: Feng-hq/dsh-autostart
 category: dev
 icon: https://raw.githubusercontent.com/Feng-hq/dsh-autostart/main/assets/icon-180.png
 description:
-  en: 'Adds a start-at-sign-in switch to Settings → General for the DeepSeek Harness desktop app: the Windows HKCU Run login item is written as soon as the plugin is installed, the switch removes and restores it without a reload, and every activation re-asserts the entry so a hand-deleted or stale value is repaired. The executable is checked before the value is written, and nothing runs in the background or needs admin rights.'
-  zh: '在「设置 → 通用」里加一个 Windows 登录自启开关：插件装好后立即把 DeepSeek Harness 写进当前用户的 HKCU Run 登录项，关掉开关即删除、打开即恢复，无需重启；每次激活都会重新校准这个值，被手工删掉或指向旧路径时自动修复。写注册表前会核验可执行文件确实存在，不常驻后台、不需要管理员权限。'
+  en: 'Windows autostart for the DeepSeek Harness desktop app, switched from Settings → General: the HKCU Run login item is written as soon as the plugin is installed (on by default), the switch removes and restores it without reloading, and every activation re-asserts the entry so a hand-deleted or stale value is repaired. The executable is checked before writing, and nothing runs in the background or needs admin rights.'
+  zh: '让 DeepSeek Harness 桌面版随 Windows 登录自动启动（开机自启），开关就在「设置 → 通用」：插件装好后默认开启、立即写入当前用户的 HKCU Run 登录项；关掉开关即删除、打开即恢复，无需重启；每次激活都会重新校准这个值，被手动删掉或指向旧路径时自动修复。写注册表前会核验可执行文件确实存在，不常驻后台、不需要管理员权限。'
