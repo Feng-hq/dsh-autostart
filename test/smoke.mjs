@@ -3,8 +3,16 @@
 import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { __test } from '../index.js';
+import {
+  BLOCKED_PORTS,
+  buildLaunchScript,
+  buildLauncherVbs,
+  expectedCommand,
+  launcherPaths,
+  wscriptPath,
+} from '../launcher.js';
 
 const RUN_KEY = __test.RUN_KEY;
 const TEST_VALUE = 'dsh-autostart self test';
@@ -17,6 +25,15 @@ function check(name, condition, detail) {
   }
   failures += 1;
   console.log(`FAIL ${name}${detail === undefined ? '' : ` — ${JSON.stringify(detail)}`}`);
+}
+
+function throws(fn) {
+  try {
+    fn();
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 function reg(args) {
@@ -62,6 +79,49 @@ check('fence accepts same origin',
     headers: { host: '127.0.0.1:2307', origin: 'http://127.0.0.1:2307' },
     socket: { remoteAddress: '127.0.0.1' },
   }).trusted === true);
+
+// ── launcher generation (pure; nothing is written or run) ───────────────────
+const EXE = 'E:\\Apps\\DeepSeek Harness\\DeepSeek Harness.exe';
+const launcherConfigFile = join(tmpdir(), 'dsh-autostart-profile', 'dsh-autostart.config.json');
+const paths = launcherPaths(launcherConfigFile);
+const script = buildLaunchScript({ exe: EXE, logPath: paths.log });
+
+check('blocked ports are all inside the dynamic range',
+  BLOCKED_PORTS.length === 17 && BLOCKED_PORTS.every((port) => port >= 1024 && port <= 15001));
+check('launcher script targets the executable',
+  script.includes(`[string]$ExePath = 'E:\\Apps\\DeepSeek Harness\\DeepSeek Harness.exe'`));
+check('launcher script logs beside the preference',
+  script.includes('launch.log') && !script.includes('__LOG__'));
+check('launcher script reserves every blocked port',
+  script.includes(BLOCKED_PORTS.join(',')));
+check('launcher script retries a fetch-blocked-port crash',
+  script.includes("$report -notmatch 'bad port'") && script.includes('$attempt -le $MaxAttempts'));
+check('launcher script releases its reservations in a finally block',
+  script.includes('} finally {') && script.includes('$listener.Stop()'));
+check('launcher script needs an executable', throws(() => buildLaunchScript({ logPath: paths.log })));
+
+const vbs = buildLauncherVbs(paths.script, EXE);
+check('trampoline runs PowerShell without a window',
+  vbs.includes('powershell.exe') && vbs.includes(', 0, False'));
+check('trampoline quotes its command the way VBScript needs',
+  vbs.includes('shell.Run """') && vbs.includes('""", 0, False'));
+check('trampoline falls back to the executable when the script is gone',
+  vbs.includes('fso.FileExists') && vbs.includes('Else'));
+check('launcher lives in its own folder inside the profile',
+  paths.dir === join(dirname(launcherConfigFile), 'dsh-autostart')
+  && paths.script === join(paths.dir, 'launch.ps1'));
+check('launcher command starts wscript with the trampoline',
+  expectedCommand({ launchMode: 'launcher' }, EXE, launcherConfigFile).includes(wscriptPath())
+  && expectedCommand({ launchMode: 'launcher' }, EXE, launcherConfigFile).includes(paths.vbs));
+check('direct mode puts the executable itself in the registry',
+  expectedCommand({ launchMode: 'direct' }, EXE, launcherConfigFile) === `"${EXE}"`);
+check('no executable means no command',
+  expectedCommand({ launchMode: 'launcher' }, '', launcherConfigFile) === '');
+check('clamp keeps a known launch mode',
+  __test.clampConfig({ launchMode: 'direct' }).launchMode === 'direct');
+check('clamp drops an unknown launch mode',
+  __test.clampConfig({ launchMode: 'magic' }).launchMode === undefined);
+check('defaults launch through the launcher', __test.effectiveConfig({}, '').launchMode === 'launcher');
 
 // ── registry round-trip (throwaway value name, never the real login item) ────
 const command = '"C:\\Program Files\\Some App\\Some App.exe"';

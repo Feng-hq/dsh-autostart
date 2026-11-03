@@ -2,17 +2,19 @@
 //
 // Owns one Windows per-user login item and nothing else:
 //
-//   HKCU\Software\Microsoft\Windows\CurrentVersion\Run  →  "…\DeepSeek Harness.exe"
+//   HKCU\Software\Microsoft\Windows\CurrentVersion\Run  →  "…\wscript.exe" //nologo "…\launch.vbs"
 //
-// The item points straight at the shipped desktop executable (process.execPath of
-// the Desktop host process is that executable), so no helper process, no scheduled
-// task and no elevation are involved. The user-facing switch lives in
-// Settings → General (client half); this half persists the preference, reconciles
-// the registry on every activation and serves the two routes the switch talks to.
+// By default the value starts the generated hidden launcher (see launcher.js) rather
+// than the executable itself: the Desktop shell bootstraps on a `--port 0` port, and
+// the rare bootstrap port that fetch calls blocked aborts startup with a dialog. The
+// launcher holds those ports during one bootstrap and retries a failed start.
+// `launchMode: "direct"` puts the executable back in the value for troubleshooting.
+//
 
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
+import { ensureLauncher, expectedCommand, launcherPaths, wscriptPath } from './launcher.js';
 
 export const name = 'dsh-autostart';
 
@@ -23,7 +25,7 @@ const ROUTES = '/plugins/dsh-autostart';
 const MAX_BODY_BYTES = 64 * 1024;
 
 /** Code defaults. The patch row's `config` (second apply argument) and the config file override these in that order. */
-export const DEFAULTS = Object.freeze({ enabled: true, exePath: '' });
+export const DEFAULTS = Object.freeze({ enabled: true, exePath: '', launchMode: 'launcher' });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // small helpers
@@ -49,6 +51,7 @@ export function clampConfig(raw) {
     const trimmed = raw.exePath.trim();
     if (trimmed) out.exePath = trimmed;
   }
+  if (raw.launchMode === 'launcher' || raw.launchMode === 'direct') out.launchMode = raw.launchMode;
   return out;
 }
 
@@ -234,16 +237,29 @@ async function deleteLoginItem() {
  * Make the registry match the preference. Idempotent: a matching value is left alone,
  * and turning the switch off removes the value only when it exists.
  */
-export async function applyDesired(eff) {
+export async function applyDesired(eff, configFile = resolveConfigFile()) {
   if (process.platform !== 'win32') return { ok: false, reason: 'unsupported-platform' };
   if (eff.enabled) {
     const exe = resolveExe(eff);
     if (!exe) return { ok: false, reason: 'executable-unknown' };
     if (!existsSync(exe)) return { ok: false, reason: 'executable-missing' };
-    const command = `"${exe}"`;
+    let mode = eff.launchMode === 'direct' ? 'direct' : 'launcher';
+    let launchError = '';
+    if (mode === 'launcher') {
+      try {
+        ensureLauncher(exe, configFile);
+      } catch (error) {
+        // A broken launcher must not cost the user autostart: fall back to the executable.
+        launchError = errorMessage(error);
+        mode = 'direct';
+      }
+    }
+    const command = expectedCommand({ launchMode: mode }, exe, configFile);
     const current = await readLoginItem();
     if (!sameCommand(current, command)) await writeLoginItem(command);
-    return { ok: true, enabled: true, command };
+    return launchError
+      ? { ok: true, enabled: true, command, mode, launcherError: launchError }
+      : { ok: true, enabled: true, command, mode };
   }
   const current = await readLoginItem();
   if (current !== null) await deleteLoginItem();
@@ -259,7 +275,9 @@ async function describeState(eff, configFile, extra = {}) {
   const exe = supported ? resolveExe(eff) : '';
   const exeExists = Boolean(exe) && existsSync(exe);
   const current = supported ? await readLoginItem() : null;
-  const active = Boolean(eff.enabled && exeExists && current !== null && sameCommand(current, `"${exe}"`));
+  const want = supported && exe ? expectedCommand(eff, exe, configFile) : '';
+  const active = Boolean(eff.enabled && exeExists && current !== null && sameCommand(current, want));
+  const paths = launcherPaths(configFile);
   return {
     ok: true,
     platform: process.platform,
@@ -269,7 +287,18 @@ async function describeState(eff, configFile, extra = {}) {
     executable: exe,
     executableExists: exeExists,
     loginItem: current,
-    /** The registry really holds an entry pointing at the executable we would launch. */
+    /** The command the preference asks the registry to hold (launcher or executable). */
+    expectedLoginItem: want,
+    /** Generated launcher paths; `ready` means both files exist on disk. */
+    launcher: {
+      mode: eff.launchMode === 'direct' ? 'direct' : 'launcher',
+      directory: paths.dir,
+      script: paths.script,
+      trampoline: paths.vbs,
+      log: paths.log,
+      ready: Boolean(paths.vbs) && existsSync(paths.vbs) && existsSync(paths.script),
+    },
+    /** The registry really holds an entry pointing at what we would launch. */
     active,
     ...extra,
   };
@@ -322,7 +351,7 @@ async function handleConfig(req, res, patchConfig, enqueue) {
   }
 
   const eff = effectiveConfig(patchConfig, configFile);
-  const applied = await enqueue(() => applyDesired(eff));
+  const applied = await enqueue(() => applyDesired(eff, configFile));
   if (applied && applied.ok === false) {
     const state = await describeState(eff, configFile, { saved: true, reason: applied.reason });
     return sendJson(res, 409, state);
@@ -361,7 +390,7 @@ export function apply(ctx, config = {}) {
   // Installed ⇒ enabled: every activation reconciles the login item with the stored
   // preference, so a plugin reinstalled over an old config reports the truth instead
   // of silently keeping a stale entry.
-  void enqueue(() => applyDesired(effectiveConfig(patchConfig, configFile)));
+  void enqueue(() => applyDesired(effectiveConfig(patchConfig, configFile), configFile));
 
   ctx.inject(['webServer'], (hostCtx) => {
     hostCtx.effect(() => {
@@ -403,4 +432,7 @@ export const __test = {
   loadFileConfig,
   readLoginItem,
   applyDesired,
+  wscriptPath,
+  launcherPaths,
+  expectedCommand,
 };

@@ -1,6 +1,6 @@
 {
   "name": "dsh-autostart",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Start DeepSeek Harness automatically when you sign in to Windows — installed enabled, switchable any time in Settings → General. · DSH 桌面版开机自启动：安装后默认开启，可在「设置 → 通用」一键开关。",
   "type": "module",
@@ -25,6 +25,7 @@
   },
   "files": [
     "index.js",
+    "launcher.js",
     "client.js",
     "cordis.patch.yml",
     "icon.svg",
